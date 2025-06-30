@@ -16,14 +16,20 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
-
 # Configurações
 BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 CLIENT_ID = os.getenv('DISCORD_CLIENT_ID')
-GUILD_ID = int(os.getenv('DISCORD_GUILD_ID', 0))
+
+# Tratar GUILD_ID de forma segura
+guild_id_str = os.getenv('DISCORD_GUILD_ID', '0')
+try:
+    GUILD_ID = int(guild_id_str) if guild_id_str.isdigit() else 0
+except (ValueError, AttributeError):
+    GUILD_ID = 0
+
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:3000')
+CRON_SECRET = os.getenv('CRON_SECRET')
 
 # Cores para embeds
 COLORS = {
@@ -55,14 +61,14 @@ class TimaoBot(commands.Bot):
         
         # Carregar comandos
         await self.load_extension('comandos.cron')
-        await self.load_extension('comandos.bet')
-        await self.load_extension('comandos.profile')
-        await self.load_extension('comandos.news')
-        await self.load_extension('comandos.quiz')
-        await self.load_extension('comandos.forca')
-        await self.load_extension('comandos.bolao')
-        await self.load_extension('comandos.mvp')
-        await self.load_extension('comandos.admin')
+        # await self.load_extension('comandos.bet')
+        # await self.load_extension('comandos.profile')
+        # await self.load_extension('comandos.news')
+        # await self.load_extension('comandos.quiz')
+        # await self.load_extension('comandos.forca')
+        # await self.load_extension('comandos.bolao')
+        # await self.load_extension('comandos.mvp')
+        # await self.load_extension('comandos.admin')
         
         # Iniciar tarefas em background
         self.sync_commands.start()
@@ -80,7 +86,15 @@ class TimaoBot(commands.Bot):
     async def sync_commands(self):
         """Sincronizar comandos com o site"""
         try:
-            headers = {'Authorization': f'Bearer {os.getenv("CRON_SECRET")}'}
+            headers = {'Authorization': f'Bearer {CRON_SECRET}'}
+            
+            # Primeiro testar se a API está funcionando
+            async with self.session.get(f'{API_BASE_URL}/api/bot/test', headers=headers) as test_response:
+                if test_response.status != 200:
+                    print(f'❌ API não está acessível: {test_response.status}')
+                    return
+            
+            # Se o teste passou, tentar sincronizar comandos
             async with self.session.post(f'{API_BASE_URL}/api/bot/update', headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -94,7 +108,9 @@ class TimaoBot(commands.Bot):
     async def health_check(self):
         """Verificar saúde do bot e conexão com o site"""
         try:
-            headers = {'Authorization': f'Bearer {os.getenv("CRON_SECRET")}'}
+            headers = {'Authorization': f'Bearer {CRON_SECRET}'}
+            
+            # Testar endpoint de sync
             async with self.session.get(f'{API_BASE_URL}/api/bot/sync', headers=headers) as response:
                 if response.status == 200:
                     print(f'✅ Health check: {datetime.now().strftime("%H:%M:%S")}')
@@ -102,6 +118,8 @@ class TimaoBot(commands.Bot):
                     print(f'⚠️ Health check falhou: {response.status}')
         except Exception as e:
             print(f'❌ Health check erro: {e}')
+
+bot = TimaoBot()
 
 # Eventos do bot
 @bot.event
@@ -218,6 +236,42 @@ async def help_command(ctx):
     embed.set_footer(text="Use / antes do comando para comandos slash!")
     
     await ctx.send(embed=embed)
+
+@bot.command(name='atualizapartidas')
+@commands.has_permissions(administrator=True)
+async def atualiza_partidas(ctx):
+    """Atualiza as partidas de futebol manualmente via cron job do site"""
+    embed = discord.Embed(
+        title="🔄 Atualizando Partidas",
+        description="Aguarde, atualizando partidas de futebol...",
+        color=COLORS['info']
+    )
+    msg = await ctx.send(embed=embed)
+    try:
+        headers = {'Authorization': f'Bearer {CRON_SECRET}'}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f'{API_BASE_URL}/api/cron/update-matches', headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    embed = discord.Embed(
+                        title="✅ Partidas Atualizadas",
+                        description=data.get('message', 'Partidas atualizadas com sucesso!'),
+                        color=COLORS['success']
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="❌ Erro ao Atualizar",
+                        description=f'Erro: {response.status}',
+                        color=COLORS['error']
+                    )
+        await msg.edit(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ Erro ao Atualizar",
+            description=str(e),
+            color=COLORS['error']
+        )
+        await msg.edit(embed=embed)
 
 # Função principal
 def main():
